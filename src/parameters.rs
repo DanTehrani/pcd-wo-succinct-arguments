@@ -230,7 +230,7 @@ use ark_ff::PrimeField;
 use std::str::FromStr;
 
 // returns optimized for constraints
-pub fn get_poseidon_params<C: CurveGroup>(_rate: usize) -> PoseidonConfig<C::ScalarField>
+pub fn get_poseidon_params<C: CurveGroup>(_rate: usize) -> PoseidonConfig<C::BaseField>
 where
     C::BaseField: PrimeField,
 {
@@ -239,7 +239,7 @@ where
         .map(|ark| {
             ark.iter()
                 .map(|v| {
-                    C::ScalarField::from_str(v)
+                    C::BaseField::from_str(v)
                         .map_err(|_| anyhow!("Parse error"))
                         .unwrap()
                 })
@@ -251,7 +251,7 @@ where
         .map(|mds| {
             mds.iter()
                 .map(|v| {
-                    C::ScalarField::from_str(v)
+                    C::BaseField::from_str(v)
                         .map_err(|_| anyhow!("Parse error"))
                         .unwrap()
                 })

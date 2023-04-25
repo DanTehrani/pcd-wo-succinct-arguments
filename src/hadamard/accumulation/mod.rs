@@ -57,11 +57,12 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hadamard::accumulation::decider::Decider;
     use crate::hadamard::accumulation::prover::AccumulationProver;
     use crate::hadamard::accumulation::verifier::AccumulationVerifier;
     use crate::hadamard::predicate::{HadamardPredicate, HadamardProof};
     use crate::parameters::*;
-    use ark_bls12_381::{Bls12_381, Fq, Fr, G1Projective};
+    use ark_bls12_381::{g1::G1Projective, Fr};
     use ark_crypto_primitives::commitment::{
         pedersen::{Commitment, Window},
         CommitmentScheme,
@@ -74,7 +75,7 @@ mod tests {
     struct HadamardCommWindow {}
 
     impl Window for HadamardCommWindow {
-        const WINDOW_SIZE: usize = 32 * 8;
+        const WINDOW_SIZE: usize = 256;
         const NUM_WINDOWS: usize = 2;
     }
 
@@ -82,7 +83,7 @@ mod tests {
     struct AccProverCommWindow {}
 
     impl Window for AccProverCommWindow {
-        const WINDOW_SIZE: usize = 32 * 8;
+        const WINDOW_SIZE: usize = 256;
         const NUM_WINDOWS: usize = 4;
     }
 
@@ -96,7 +97,7 @@ mod tests {
         let a_1 = vec![Fr::from(1), Fr::from(2)];
         let b_1 = vec![Fr::from(2), Fr::from(3)];
 
-        let a_2 = vec![Fr::from(3), Fr::from(4)];
+        let a_2 = vec![Fr::from(1), Fr::from(2)];
         let b_2 = vec![Fr::from(4), Fr::from(5)];
 
         // Accumulate two predicate instances
@@ -124,8 +125,8 @@ mod tests {
             _marker: PhantomData,
         };
 
-        let qx = vec![qx_1, qx_2];
-        let qw = vec![qw_1, qw_2];
+        let qx = vec![qx_1, qx_2.clone(), qx_2];
+        let qw = vec![qw_1, qw_2.clone(), qw_2];
 
         // Compute the accumulator and the accumulation proof
         let prover_sponge = PoseidonSponge::new(&poseidon_config);
@@ -139,8 +140,9 @@ mod tests {
             AccumulationVerifier::<G1Projective, AccProverCommWindow>::new(verifier_sponge);
 
         // Verify the accumulation
-        verifier.verify(acc.0, &qx, &pf);
+        verifier.verify(&acc.qx, &qx, &pf);
 
-        // TODO: Run the verifier
+        let decider = Decider::<G1Projective, HadamardCommWindow>::new(hadamard_predicate.params);
+        decider.verify(&acc);
     }
 }

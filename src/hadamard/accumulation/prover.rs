@@ -8,27 +8,29 @@ use ark_crypto_primitives::sponge::{
     poseidon::PoseidonSponge, CryptographicSponge, FieldBasedCryptographicSponge,
 };
 use ark_ec::{AffineRepr, CurveGroup, Group};
-use ark_ff::{BigInteger, Field, PrimeField, Zero};
+use ark_ff::{BigInteger, Field, One, PrimeField, Zero};
 use ark_poly::univariate::DensePolynomial;
-use ark_poly::DenseUVPolynomial;
+use ark_poly::{DenseUVPolynomial, Polynomial};
 use ark_std::test_rng;
 use std::marker::PhantomData;
 
 pub struct AccumulationProver<C, W>
 where
     C: CurveGroup,
+    C::BaseField: PrimeField,
 {
     pub params: Parameters<C>,
-    sponge: PoseidonSponge<<C as Group>::ScalarField>,
+    sponge: PoseidonSponge<C::BaseField>,
     _marker: PhantomData<W>,
 }
 
 impl<C, W> AccumulationProver<C, W>
 where
     C: CurveGroup,
+    C::BaseField: PrimeField,
     W: Window,
 {
-    pub fn new(sponge: PoseidonSponge<<C as Group>::ScalarField>) -> Self {
+    pub fn new(sponge: PoseidonSponge<C::BaseField>) -> Self {
         let mut rng = test_rng();
         let params = Commitment::<C, W>::setup(&mut rng).unwrap();
         AccumulationProver {
@@ -43,10 +45,7 @@ where
         &mut self,
         qx: Vec<HadamardInstance<C>>,
         qw: Vec<HadamardWitness<C>>,
-    ) -> (
-        (HadamardInstance<C>, HadamardWitness<C>),
-        HadamardAccProof<C>,
-    ) {
+    ) -> (HadamardAcc<C>, HadamardAccProof<C>) {
         let n = qx.len();
         let l = qw[0].a_vec.len();
 
@@ -55,29 +54,33 @@ where
             self.sponge.absorb(&qx_i.to_absorbable_bytes());
         }
 
-        let mu = self.sponge.squeeze_native_field_elements(1)[0];
+        let mu = self.sponge.squeeze_field_elements::<C::ScalarField>(1)[0];
         let mut mu_powers = vec![];
         for i in 0..n {
             mu_powers.push(mu.pow(&[i as u64]));
         }
 
-        let num_inputs = qx.len();
-        let mut t_vecs = vec![Vec::with_capacity(l); 2 * num_inputs - 1];
-        for (i, qw_i) in qw.iter().enumerate() {
-            let mu_a_vec = qw_i.a_vec.iter().map(|a| *a * &mu_powers[i]).collect();
-            let mut b_vec = qw_i.b_vec.clone();
-            b_vec.reverse();
+        let mut t_vecs = vec![Vec::with_capacity(l); 2 * n - 1];
+        for i in 0..l {
+            let mut a_coeffs = vec![];
+            let mut b_coeffs = vec![];
+            for (j, qw_i) in qw.iter().enumerate() {
+                a_coeffs.push(qw_i.a_vec[i] * &mu_powers[j]);
+                b_coeffs.push(qw_i.b_vec[i]);
+            }
+            b_coeffs.reverse();
 
-            let a_poly = DensePolynomial::from_coefficients_vec(mu_a_vec);
-            let b_poly = DensePolynomial::from_coefficients_vec(b_vec);
+            let a_poly = DensePolynomial::from_coefficients_vec(a_coeffs);
+            let b_poly = DensePolynomial::from_coefficients_vec(b_coeffs);
 
             let product_poly = a_poly.naive_mul(&b_poly);
+
             let mut product_coeffs = product_poly.coeffs;
-            if product_coeffs.len() < 2 * num_inputs - 1 {
-                product_coeffs.resize_with(2 * num_inputs - 1, || C::ScalarField::zero());
+            if product_coeffs.len() < 2 * n - 1 {
+                product_coeffs.resize_with(2 * n - 1, || C::ScalarField::zero());
             }
 
-            for i in 0..(2 * num_inputs - 1) {
+            for i in 0..(2 * n - 1) {
                 t_vecs[i].push(product_coeffs[i].clone());
                 // t_vecs[i]: push the i'th degree coefficient of the product polynomial to the i'th t_vec
                 // each t_vec in t_vecs will be full with the coefficients of the product polynomial
@@ -87,17 +90,31 @@ where
         }
 
         // Commit t_vecs
-        let mut comm_t_vecs = Vec::with_capacity(n * 2 - 1);
-        for t_vec in t_vecs {
-            let c_t_i = Commitment::<C, W>::commit_vec(
-                &self.params,
-                t_vec,
-                &Randomness(C::ScalarField::zero()),
-            );
-            comm_t_vecs.push(c_t_i);
+        let mut comm_t_vecs_low = Vec::with_capacity(n - 1);
+        let mut comm_t_vecs_high = Vec::with_capacity(n - 1);
+        for (i, t_vec) in t_vecs.iter().enumerate() {
+            if i == n - 1 {
+                continue;
+            }
+
+            if i < n {
+                let c_t_i = Commitment::<C, W>::commit_vec(
+                    &self.params,
+                    t_vec.clone(),
+                    &Randomness(C::ScalarField::zero()),
+                );
+                comm_t_vecs_low.push(c_t_i);
+            } else {
+                let c_t_i = Commitment::<C, W>::commit_vec(
+                    &self.params,
+                    t_vec.clone(),
+                    &Randomness(C::ScalarField::zero()),
+                );
+                comm_t_vecs_high.push(c_t_i);
+            }
         }
 
-        let nu = self.sponge.squeeze_native_field_elements(1)[0];
+        let nu = self.sponge.squeeze_field_elements::<C::ScalarField>(1)[0];
 
         let mut nu_powers = vec![];
         for i in 0..qx.len() {
@@ -113,8 +130,8 @@ where
         }
 
         let mut c3_1 = C::zero();
-        for i in 0..n {
-            c3_1 += comm_t_vecs[i] * nu_powers[i];
+        for i in 0..comm_t_vecs_low.len() {
+            c3_1 += comm_t_vecs_low[i] * nu_powers[i];
         }
         let mut c3_2 = C::zero();
         for (i, qx_i) in qx.iter().enumerate() {
@@ -123,14 +140,17 @@ where
         c3_2 *= nu_powers[n - 1];
 
         let mut c3_3 = C::zero();
-        for i in 0..(n - 1) {
-            c3_3 += comm_t_vecs[n + i] * nu.pow([(n + i - 1) as u64]);
+        for i in 0..comm_t_vecs_high.len() {
+            c3_3 += comm_t_vecs_high[i] * nu.pow([(n + i) as u64]);
         }
 
         let c3 = c3_1 + c3_2 + c3_3;
 
-        let mut a = vec![C::ScalarField::zero(); qx.len()];
-        let mut b = vec![C::ScalarField::zero(); qx.len()];
+        // a_1 * mu^0 * nu^0 + a_2 * mu^1 * nu^1
+        let mut a = vec![C::ScalarField::zero(); l];
+        let mut b = vec![C::ScalarField::zero(); l];
+
+        // qw_1.w_1 * mu^0 * nu^0 + qw_1.w_2 * mu^1 * nu^1
         let mut w1 = C::ScalarField::zero();
         let mut w2 = C::ScalarField::zero();
         let mut w3 = C::ScalarField::zero();
@@ -150,10 +170,14 @@ where
         }
         w3 *= nu_powers[n - 1];
 
+        let mut comm_t_vecs = vec![];
+        comm_t_vecs.extend_from_slice(&comm_t_vecs_low);
+        comm_t_vecs.extend_from_slice(&comm_t_vecs_high);
+
         (
-            (
-                HadamardInstance(c1.into_affine(), c2.into_affine(), c3.into_affine()),
-                HadamardWitness {
+            HadamardAcc {
+                qx: HadamardInstance(c1.into_affine(), c2.into_affine(), c3.into_affine()),
+                qw: HadamardWitness {
                     a_vec: a,
                     b_vec: b,
                     w1,
@@ -161,7 +185,7 @@ where
                     w3,
                     _marker: PhantomData,
                 },
-            ),
+            },
             HadamardAccProof(comm_t_vecs),
         )
     }

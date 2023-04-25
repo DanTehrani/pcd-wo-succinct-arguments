@@ -4,24 +4,26 @@ use ark_crypto_primitives::sponge::{
     poseidon::PoseidonSponge, CryptographicSponge, FieldBasedCryptographicSponge,
 };
 use ark_ec::{CurveGroup, Group};
-use ark_ff::Field;
+use ark_ff::{Field, PrimeField};
 use std::marker::PhantomData;
 
 pub struct AccumulationVerifier<C, W>
 where
     C: CurveGroup,
+    C::BaseField: PrimeField,
     W: Window,
 {
-    sponge: PoseidonSponge<<C as Group>::ScalarField>,
+    sponge: PoseidonSponge<C::BaseField>,
     _marker: PhantomData<W>,
 }
 
 impl<C, W> AccumulationVerifier<C, W>
 where
     C: CurveGroup,
+    C::BaseField: PrimeField,
     W: Window,
 {
-    pub fn new(sponge: PoseidonSponge<<C as Group>::ScalarField>) -> Self {
+    pub fn new(sponge: PoseidonSponge<C::BaseField>) -> Self {
         AccumulationVerifier {
             sponge,
             _marker: PhantomData,
@@ -30,7 +32,7 @@ where
 
     pub fn verify(
         &mut self,
-        acc_x: HadamardInstance<C>,
+        acc_x: &HadamardInstance<C>,
         acc_xs: &Vec<HadamardInstance<C>>,
         proof: &HadamardAccProof<C>,
     ) {
@@ -40,8 +42,8 @@ where
         }
 
         let n = acc_xs.len();
-        let mu = self.sponge.squeeze_native_field_elements(1)[0];
-        let nu = self.sponge.squeeze_native_field_elements(1)[0];
+        let mu: C::ScalarField = self.sponge.squeeze_field_elements(1)[0];
+        let nu: C::ScalarField = self.sponge.squeeze_field_elements(1)[0];
 
         let mut mu_powers = vec![];
         for i in 0..n {
@@ -64,7 +66,7 @@ where
         let mut expected_c3_2 = C::zero();
         let mut expected_c3_3 = C::zero();
 
-        for i in 0..n {
+        for i in 0..(n - 1) {
             expected_c3_1 += proof.0[i] * nu_powers[i];
         }
 
@@ -74,7 +76,7 @@ where
         expected_c3_2 *= nu_powers[n - 1];
 
         for i in 0..(n - 1) {
-            expected_c3_3 += proof.0[i + n] * nu.pow([(n + i - 1) as u64]);
+            expected_c3_3 += proof.0[i + n - 1] * nu.pow([(n + i) as u64]);
         }
 
         let expected_c3 = expected_c3_1 + expected_c3_2 + expected_c3_3;

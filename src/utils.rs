@@ -31,7 +31,9 @@ impl<C: CurveGroup, W: Window> CommitVec<C> for Commitment<C, W> {
         let mut bytes = vec![];
 
         for scalar in vec.iter() {
-            bytes.extend_from_slice(&<C::ScalarField as ScalarToBytes<C>>::to_bytes(scalar));
+            let mut b = <C::ScalarField as ScalarToBytes<C>>::to_bytes(scalar);
+            b.reverse();
+            bytes.extend_from_slice(&b);
         }
 
         Self::commit(params, &bytes, r).unwrap()

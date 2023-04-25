@@ -2,7 +2,7 @@ use crate::CommitVec;
 use ark_crypto_primitives::commitment::pedersen::{Commitment, Parameters, Randomness, Window};
 use ark_crypto_primitives::commitment::CommitmentScheme;
 use ark_ec::CurveGroup;
-use ark_ff::Zero;
+use ark_ff::{One, Zero};
 use ark_std::{test_rng, UniformRand};
 use std::marker::PhantomData;
 
@@ -33,7 +33,7 @@ impl<C: CurveGroup, W: Window> HadamardPredicate<C, W> {
     pub fn hadamard_prod(a: &[C::ScalarField], b: &[C::ScalarField]) -> Vec<C::ScalarField> {
         let mut c = vec![C::ScalarField::zero(); a.len()];
         for i in 0..a.len() {
-            c[i] += a[i] * b[i];
+            c[i] = a[i] * b[i];
         }
         c
     }
